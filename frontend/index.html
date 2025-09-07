@@ -1,0 +1,155 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Gov Schemes Chatbot — Prototype</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 text-slate-800">
+  <div class="max-w-6xl mx-auto p-6">
+    <header class="mb-6">
+      <h1 class="text-2xl font-semibold">Government Schemes Chatbot — Prototype</h1>
+      <p class="text-sm text-slate-600">Demo data only. Verify on official portals.</p>
+    </header>
+
+    <div class="grid lg:grid-cols-3 gap-6">
+      <section class="lg:col-span-2 bg-white rounded-xl shadow p-4">
+        <div id="chat" class="h-64 overflow-auto p-2 space-y-3"></div>
+
+        <div class="mt-3 flex gap-2">
+          <input id="q" class="flex-1 border rounded px-3 py-2" placeholder="Ask e.g., 'schemes for farmers in Tamil Nadu'">
+          <button id="send" class="bg-indigo-600 text-white px-4 rounded">Search</button>
+        </div>
+
+        <div class="mt-6">
+          <h3 class="font-medium">Results</h3>
+          <div id="results" class="mt-2 space-y-2"></div>
+        </div>
+      </section>
+
+      <aside class="bg-white rounded-xl shadow p-4">
+        <h3 class="font-medium mb-2">Quick Eligibility Check</h3>
+        <form id="elig-form" class="space-y-2">
+          <input name="age" type="number" placeholder="Age" class="w-full border rounded px-2 py-2" />
+          <select name="gender" class="w-full border rounded px-2 py-2">
+            <option value="">Gender (optional)</option>
+            <option>female</option>
+            <option>male</option>
+            <option>other</option>
+          </select>
+          <input name="income" type="number" placeholder="Annual income (₹)" class="w-full border rounded px-2 py-2" />
+          <input name="occupation" placeholder="Occupation (farmer, student...)" class="w-full border rounded px-2 py-2" />
+          <input name="state" placeholder="State (e.g., Tamil Nadu)" class="w-full border rounded px-2 py-2" />
+          <button class="w-full bg-green-600 text-white px-3 py-2 rounded">Check</button>
+        </form>
+
+        <div id="elig-results" class="mt-4 space-y-3"></div>
+      </aside>
+    </div>
+
+    <footer class="mt-6 text-sm text-slate-500">Prototype — educational use.</footer>
+  </div>
+
+<script>
+  const API = 'http://localhost:4000';
+  const chat = document.getElementById('chat');
+  const results = document.getElementById('results');
+  const sendBtn = document.getElementById('send');
+  const input = document.getElementById('q');
+
+  function addChat(text, who='bot') {
+    const div = document.createElement('div');
+    div.className = 'rounded p-2 max-w-[80%] ' + (who === 'user' ? 'ml-auto bg-blue-50 text-right' : 'bg-gray-100');
+    div.textContent = text;
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  function renderSchemes(list) {
+    results.innerHTML = '';
+    if (!list || list.length === 0) {
+      results.innerHTML = '<div class="text-sm text-slate-500">No schemes found.</div>';
+      return;
+    }
+    list.forEach(s => {
+      const card = document.createElement('div');
+      card.className = 'border rounded p-3 bg-white shadow-sm';
+      card.innerHTML = `
+        <div class="text-sm text-slate-600">${s.category} • ${(s.states||[]).join(', ')}</div>
+        <h4 class="font-semibold">${s.name}</h4>
+        <p class="text-sm">${s.description||''}</p>
+        <div class="text-sm mt-2"><strong>Benefits:</strong> ${s.benefits||'-'}</div>
+        <div class="text-sm"><strong>Documents:</strong> ${(s.documents||[]).join(', ')}</div>
+        <div class="mt-2"><a class="text-indigo-600 text-sm" href="${s.officialLink}" target="_blank">Official link</a></div>
+      `;
+      results.appendChild(card);
+    });
+  }
+
+  async function search(q) {
+    const url = new URL(API + '/api/schemes');
+    url.searchParams.set('q', q);
+    // naive: detect "in <state>"
+    const inIdx = q.toLowerCase().indexOf(' in ');
+    if (inIdx !== -1) {
+      const st = q.slice(inIdx + 4).trim();
+      if (st) url.searchParams.set('state', st);
+    }
+    const res = await fetch(url);
+    const data = await res.json();
+    return data;
+  }
+
+  sendBtn.addEventListener('click', async () => {
+    const q = input.value.trim();
+    if (!q) return;
+    addChat(q, 'user');
+    addChat('Searching...', 'bot');
+    const data = await search(q);
+    // remove last bot message 'Searching...'
+    chat.removeChild(chat.lastChild);
+    addChat(`Found ${data.count} scheme(s).`, 'bot');
+    renderSchemes(data.results);
+    input.value = '';
+  });
+
+  document.getElementById('elig-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const payload = Object.fromEntries(fd.entries());
+    if (payload.age) payload.age = Number(payload.age);
+    if (payload.income) payload.income = Number(payload.income);
+
+    const res = await fetch(API + '/api/eligibility/check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    const matches = data.matches || [];
+    const container = document.getElementById('elig-results');
+    container.innerHTML = '';
+    if (!matches.length) {
+      container.innerHTML = '<div class="text-sm text-slate-500">No close matches found.</div>';
+      return;
+    }
+    matches.forEach(m => {
+      const el = document.createElement('div');
+      el.className = 'border rounded p-3 bg-white';
+      el.innerHTML = `
+        <div class="text-xs text-slate-500">score: ${m.score}</div>
+        <div class="font-semibold">${m.scheme.name}</div>
+        <div class="text-sm">${m.scheme.description || ''}</div>
+        <div class="text-xs text-slate-600 mt-1"><strong>Notes:</strong> ${m.reasons.length ? m.reasons.join('; ') : 'Potential match'}</div>
+        <div class="mt-2"><a class="text-indigo-600 text-sm" href="${m.scheme.officialLink}" target="_blank">Official link</a></div>
+      `;
+      container.appendChild(el);
+    });
+  });
+
+  // greeting
+  addChat('Hello — ask about schemes or use the eligibility form on the right.');
+</script>
+</body>
+</html>
